@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Environments
+.env
+.venv
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data — never commit raw slides or large arrays
+data/raw/
+data/features/
+*.svs
+*.ndpi
+*.tiff
+*.tif
+*.h5
+*.pt
+*.npy
+*.npz
+
+# Outputs
+results/
+checkpoints/
+logs/
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
