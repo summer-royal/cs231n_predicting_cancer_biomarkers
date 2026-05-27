@@ -1,1 +1,1 @@
-from .metrics import binary_metrics, continuous_metrics, summarize_results
+from .metrics import binary_metrics, continuous_metrics, multiclass_metrics, summarize_results
