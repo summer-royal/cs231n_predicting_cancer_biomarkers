@@ -31,8 +31,10 @@ def make_patient_splits(
     Returns dict with keys 'train', 'val', 'test' and values = case_id arrays.
     """
     df = pd.read_csv(labels_csv, index_col="case_id")
+    if stratify_col:
+        df = df[df[stratify_col].notna()]
     case_ids = df.index.to_numpy()
-    strat = df[stratify_col].fillna("Unknown").to_numpy() if stratify_col else None
+    strat = df[stratify_col].astype(str).to_numpy() if stratify_col else None
 
     train_ratio, val_ratio, _ = ratios
     train_ids, temp_ids, train_strat, temp_strat = train_test_split(
