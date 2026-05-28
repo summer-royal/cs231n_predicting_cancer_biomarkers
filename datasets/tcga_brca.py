@@ -49,7 +49,13 @@ class TCGABRCADataset(Dataset):
 
         labels_df = pd.read_csv(labels_csv, index_col="case_id")
         self.labels_df = labels_df.loc[labels_df.index.intersection(case_ids)]
-        self.case_ids = list(self.labels_df.index)
+        self.case_ids = [
+            cid for cid in self.labels_df.index
+            if (self.feature_dir / f"{cid}.h5").exists()
+        ]
+        missing = len(self.labels_df) - len(self.case_ids)
+        if missing:
+            print(f"[TCGABRCADataset] Skipping {missing} case(s) with no .h5 file.")
 
         if len(self.case_ids) == 0:
             raise ValueError("No matching case IDs found between CSV and feature directory.")
