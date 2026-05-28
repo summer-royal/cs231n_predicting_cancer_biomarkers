@@ -85,8 +85,49 @@ make_patient_splits("data/labels/tcga_brca_labels.csv", "data/splits")
 ### 5. Train
 
 ```bash
-python scripts/run_training.py --target ER_status --model clam_sb
+python scripts/smoke_train_clam.py \
+    --features_dir data/features \
+    --labels_csv data/labels/tcga_brca_labels.csv \
+    --split_csv data/splits/train.csv \
+    --target ER_status \
+    --task_type binary \
+    --model clam_sb \
+    --max_patches 512 \
+    --epochs 1
 ```
+
+## Debug / smoke tests
+
+Before launching a real training run, verify that CLAM consumes the
+features we produce and outputs the expected shapes.
+
+**Synthetic smoke test (no data required):**
+
+```bash
+python scripts/smoke_test_clam.py
+```
+
+Checks:
+- `CLAM_SB(in_dim=2048).forward(x_{K=128})` → `logits (1, 2)`, `A (K, 1)`, `sum(A) ≈ 1`.
+- `CLAM_MB(in_dim=2048, n_classes=5).forward(x)` → `logits (1, 5)`, `A (5, K)`, each row sums to 1.
+- Small-bag edge case (`K=4`) with instance clustering — clamps `k_sample` safely.
+- `TumorAwareMIL` returns `(logits, A, tumor_probs)` with `tumor_probs ∈ [0, 1]` of shape `(K, 1)`.
+- Gradients flow through the tumor scorer end-to-end.
+
+**Real-data forward-pass debug (one slide only):**
+
+```bash
+python scripts/smoke_train_clam.py \
+    --features_dir data/features \
+    --labels_csv data/labels/tcga_brca_labels.csv \
+    --split_csv data/splits/train.csv \
+    --target PAM50_subtype --task_type multiclass --model clam_mb \
+    --epochs 0
+```
+
+`--epochs 0` prints the feature/label/logits/attention shapes for one
+slide and exits without training. Useful for sanity-checking the encoder
+output dim (`in_dim` is inferred from the actual feature tensor).
 
 ## Evaluation
 
