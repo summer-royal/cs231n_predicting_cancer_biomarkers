@@ -57,7 +57,13 @@ def extract_slide(slide_path, tile_h5, output_h5, encoder, device, batch_size=25
         patch_size = int(f.attrs["patch_size"])
         patch_level = int(f.attrs["patch_level"])
 
-    normalizer = MacenkoNormalizer() if normalize else None
+    normalizer = None
+    if normalize:
+        normalizer = MacenkoNormalizer()
+        # Fit on the first patch of this slide as the reference stain
+        ref_x, ref_y = int(coords[0][0]), int(coords[0][1])
+        ref_tile = slide.read_region((ref_x, ref_y), patch_level, (patch_size, patch_size))
+        normalizer.fit(np.array(ref_tile.convert("RGB")))
 
     dataset = PatchDataset(slide, coords, patch_size, patch_level, normalizer)
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=4, pin_memory=True)
