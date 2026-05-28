@@ -30,16 +30,13 @@ REMOTE_ROOT = Path("/data")
 # Container image: PyTorch base + OpenSlide + project code
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install([
-        "libgl1", "libglib2.0-0",
-        "libopenslide0", "openslide-tools",
-    ])
+    .apt_install(["libgl1", "libglib2.0-0"])
     .pip_install(
         "torch", "torchvision",
         extra_index_url="https://download.pytorch.org/whl/cu121",
     )
     .pip_install(
-        "openslide-python",
+        "openslide-python>=1.3.0", "openslide-bin",  # 1.3+ auto-loads bundled lib
         "h5py", "pandas", "scikit-learn", "scipy",
         "tqdm", "requests", "Pillow", "numpy", "timm",
     )
@@ -83,6 +80,15 @@ def download_slide(file_id: str, case_id: str) -> str:
             for chunk in r.iter_content(chunk_size=8 * 1024 * 1024):
                 f.write(chunk)
 
+    # SVS/TIFF files start with II (little-endian) or MM (big-endian).
+    # If we got an HTML/JSON error page instead of a real slide, delete it.
+    with open(dest, "rb") as f:
+        magic = f.read(4)
+    if magic[:2] not in (b"\x49\x49", b"\x4D\x4D"):
+        size = dest.stat().st_size
+        dest.unlink()
+        return f"bad_download {case_id} size={size} magic={magic.hex()}"
+
     vol.commit()
     return f"ok    {case_id}"
 
@@ -114,16 +120,28 @@ def process_slide(case_id: str) -> str:
     if not slide_path.exists():
         return f"missing_slide {case_id}"
 
+    # Validate file is a real SVS/TIFF before handing it to OpenSlide
+    with open(slide_path, "rb") as f:
+        magic = f.read(4)
+    if magic[:2] not in (b"\x49\x49", b"\x4D\x4D"):
+        return f"invalid_file {case_id} size={slide_path.stat().st_size} magic={magic.hex()}"
+
     if not tile_h5.exists():
-        n = TilePipeline().process_slide(str(slide_path), str(tile_h5))
+        try:
+            n = TilePipeline().process_slide(str(slide_path), str(tile_h5))
+        except Exception as exc:
+            return f"tile_error {case_id}: {exc}"
         if n == 0:
             return f"no_tissue {case_id}"
 
     if not feat_h5.exists():
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        encoder = get_encoder("resnet50", device)
-        extract_slide(str(slide_path), str(tile_h5), str(feat_h5),
-                      encoder, device, batch_size=256)
+        try:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            encoder = get_encoder("resnet50", device)
+            extract_slide(str(slide_path), str(tile_h5), str(feat_h5),
+                          encoder, device, batch_size=256)
+        except Exception as exc:
+            return f"extract_error {case_id}: {exc}"
 
     vol.commit()
     return f"ok    {case_id}"
