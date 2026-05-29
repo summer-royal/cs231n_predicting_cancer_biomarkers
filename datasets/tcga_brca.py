@@ -49,6 +49,16 @@ class TCGABRCADataset(Dataset):
 
         labels_df = pd.read_csv(labels_csv, index_col="case_id")
         self.labels_df = labels_df.loc[labels_df.index.intersection(case_ids)]
+
+        # Drop cases missing the requested target label
+        if target is not None and target in self.labels_df.columns:
+            before = len(self.labels_df)
+            self.labels_df = self.labels_df[self.labels_df[target].notna()]
+            dropped = before - len(self.labels_df)
+            if dropped:
+                print(f"[TCGABRCADataset] Skipping {dropped} case(s) with no '{target}' label.")
+
+        # Drop cases whose .h5 feature file is absent
         self.case_ids = [
             cid for cid in self.labels_df.index
             if (self.feature_dir / f"{cid}.h5").exists()

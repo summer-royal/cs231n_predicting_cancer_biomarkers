@@ -185,7 +185,7 @@ def run_train(labels_csv_content: str) -> None:
         "--splits_dir",  str(splits_dir),
     ], check=True)
 
-    # CLAM_SB for each binary target
+    # CLAM_SB training + test evaluation for each binary target
     for target in ["ER_status", "PR_status", "HER2_status"]:
         subprocess.run([
             "python", "/app/scripts/run_training.py",
@@ -197,6 +197,15 @@ def run_train(labels_csv_content: str) -> None:
             "--in_dim",      "2048",
             "--epochs",      "20",
             "--save_dir",    str(ckpt_dir),
+        ], check=True)
+        subprocess.run([
+            "python", "/app/scripts/eval_checkpoint.py",
+            "--feature_dir", str(features_dir),
+            "--labels_csv",  str(labels_csv),
+            "--splits_dir",  str(splits_dir),
+            "--target",      target,
+            "--checkpoint",  str(ckpt_dir / f"{target}_clam_sb_best.pt"),
+            "--in_dim",      "2048",
         ], check=True)
 
     vol.commit()
@@ -235,3 +244,4 @@ def main(step: str = "all"):
         print("Running baseline + CLAM training …")
         run_train.remote(labels_csv_path.read_text())
         print("Training dispatched — follow logs at modal.com/apps")
+
