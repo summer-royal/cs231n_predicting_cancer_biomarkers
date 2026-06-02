@@ -2,7 +2,7 @@
 Real-data shape-and-debug script for CLAM models on TCGA-BRCA features.
 
 This is the first thing to run *after* `extract_features.py` has produced
-.h5 files under data/features/. It:
+.h5 files under an encoder-specific feature directory.
 
   1. Loads one sample from TCGABRCADataset and prints feature/label info.
   2. Infers `in_dim` from that sample (do not hardcode 1024 vs 2048).
@@ -13,7 +13,7 @@ This is the first thing to run *after* `extract_features.py` has produced
 Example (binary ER prediction):
 
     python scripts/smoke_train_clam.py \
-        --features_dir data/features \
+        --features_dir data/features_resnet50 \
         --labels_csv data/labels/tcga_brca_labels.csv \
         --split_csv data/splits/train.csv \
         --target ER_status \

@@ -10,7 +10,9 @@ Source: [GDC Data Portal](https://portal.gdc.cancer.gov/projects/TCGA-BRCA)
 ```
 data/
 ├── raw/          # .svs files (not committed — see .gitignore)
-├── features/     # extracted patch embeddings as .h5 files (not committed)
+├── features_resnet50/  # extracted patch embeddings as .h5 files (not committed)
+├── features_uni/       # optional UNI embeddings, regenerated per encoder
+├── features_conch/     # optional CONCH embeddings, regenerated per encoder
 ├── labels/
 │   └── tcga_brca_labels.csv   # ER, PR, HER2, PAM50, transcriptomic targets
 └── splits/

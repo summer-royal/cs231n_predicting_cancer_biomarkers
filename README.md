@@ -71,9 +71,33 @@ python scripts/preprocess_slides.py \
 python scripts/extract_features.py \
     --tile_dir data/tiles \
     --slide_dir data/raw \
-    --output_dir data/features \
+    --output_dir data/features_resnet50 \
     --encoder resnet50
 ```
+
+Pathology foundation encoders are also supported once you have accepted the
+model licenses / access gates:
+
+```bash
+# Original UNI (1024-dim features)
+HF_TOKEN=... python scripts/extract_features.py \
+    --tile_dir data/tiles \
+    --slide_dir data/raw \
+    --output_dir data/features_uni \
+    --encoder uni
+
+# Original CONCH (512-dim features)
+pip install git+https://github.com/mahmoodlab/CONCH.git
+HF_TOKEN=... python scripts/extract_features.py \
+    --tile_dir data/tiles \
+    --slide_dir data/raw \
+    --output_dir data/features_conch \
+    --encoder conch
+```
+
+Use `--checkpoint_path /path/to/weights` for manually downloaded gated weights.
+Each encoder produces a different feature dimension, so regenerate and keep a
+separate feature directory for each encoder experiment.
 
 ### 4. Create patient splits
 
@@ -86,7 +110,7 @@ make_patient_splits("data/labels/tcga_brca_labels.csv", "data/splits")
 
 ```bash
 python scripts/smoke_train_clam.py \
-    --features_dir data/features \
+    --features_dir data/features_resnet50 \
     --labels_csv data/labels/tcga_brca_labels.csv \
     --split_csv data/splits/train.csv \
     --target ER_status \
@@ -105,6 +129,7 @@ features we produce and outputs the expected shapes.
 
 ```bash
 python scripts/smoke_test_clam.py
+python scripts/smoke_test_encoder.py
 ```
 
 Checks:
@@ -118,7 +143,7 @@ Checks:
 
 ```bash
 python scripts/smoke_train_clam.py \
-    --features_dir data/features \
+    --features_dir data/features_resnet50 \
     --labels_csv data/labels/tcga_brca_labels.csv \
     --split_csv data/splits/train.csv \
     --target PAM50_subtype --task_type multiclass --model clam_mb \
@@ -128,6 +153,21 @@ python scripts/smoke_train_clam.py \
 `--epochs 0` prints the feature/label/logits/attention shapes for one
 slide and exits without training. Useful for sanity-checking the encoder
 output dim (`in_dim` is inferred from the actual feature tensor).
+
+For full training, `scripts/run_training.py` and `scripts/eval_checkpoint.py`
+default to `--in_dim auto`, which reads the feature dimension from the `.h5`
+feature files. This avoids hardcoding `2048` for ResNet-50, `1024` for UNI, or
+`512` for CONCH.
+
+### Pathology foundation encoder notes
+
+`resnet50` is a simple ImageNet-pretrained baseline. `uni` and `conch` are
+pathology-pretrained encoders, which usually produce more useful histology
+features for biomarker prediction. The implementation uses UNI through
+timm/Hugging Face and CONCH through the official CONCH package. CONCH features
+are extracted with unprojected, unnormalized image embeddings
+(`proj_contrast=False`, `normalize=False`) so the MIL model receives pathology
+image features rather than contrastive retrieval embeddings.
 
 ## Evaluation
 
