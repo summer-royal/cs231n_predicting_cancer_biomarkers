@@ -191,28 +191,20 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
         "--splits_dir",  str(splits_dir),
     ], check=True)
 
-    # CLAM_SB training + test evaluation for each binary target
+    # Train clam_sb and tumor_aware for each binary target (ablation)
     for target in ["ER_status", "PR_status", "HER2_status"]:
-        subprocess.run([
-            "python", "/app/scripts/run_training.py",
-            "--feature_dir", str(features_dir),
-            "--labels_csv",  str(labels_csv),
-            "--splits_dir",  str(splits_dir),
-            "--target",      target,
-            "--model",       "clam_sb",
-            "--in_dim",      "auto",
-            "--epochs",      "20",
-            "--save_dir",    str(ckpt_dir),
-        ], check=True)
-        subprocess.run([
-            "python", "/app/scripts/eval_checkpoint.py",
-            "--feature_dir", str(features_dir),
-            "--labels_csv",  str(labels_csv),
-            "--splits_dir",  str(splits_dir),
-            "--target",      target,
-            "--checkpoint",  str(ckpt_dir / f"{target}_clam_sb_best.pt"),
-            "--in_dim",      "auto",
-        ], check=True)
+        for model in ["clam_sb", "tumor_aware"]:
+            subprocess.run([
+                "python", "/app/scripts/run_training.py",
+                "--feature_dir", str(features_dir),
+                "--labels_csv",  str(labels_csv),
+                "--splits_dir",  str(splits_dir),
+                "--target",      target,
+                "--model",       model,
+                "--in_dim",      "auto",
+                "--epochs",      "20",
+                "--save_dir",    str(ckpt_dir),
+            ], check=True)
 
     vol.commit()
 
