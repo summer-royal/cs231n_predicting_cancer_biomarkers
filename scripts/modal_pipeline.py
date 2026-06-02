@@ -11,9 +11,14 @@ Prerequisites:
 
 Usage:
     modal run scripts/modal_pipeline.py              # full pipeline
+    modal run scripts/modal_pipeline.py --encoder uni
     modal run scripts/modal_pipeline.py --step download
     modal run scripts/modal_pipeline.py --step process
     modal run scripts/modal_pipeline.py --step train
+
+CONCH note:
+    CONCH is not installed in this base image. Add the CONCH GitHub package to
+    the image before running with --encoder conch.
 """
 
 import sys
@@ -38,7 +43,7 @@ image = (
     .pip_install(
         "openslide-python>=1.3.0", "openslide-bin",  # 1.3+ auto-loads bundled lib
         "h5py", "pandas", "scikit-learn", "scipy",
-        "tqdm", "requests", "Pillow", "numpy", "timm",
+        "tqdm", "requests", "Pillow", "numpy", "timm", "huggingface_hub",
     )
     # Copy project source into the container
     .add_local_dir("preprocessing", "/app/preprocessing")
@@ -103,7 +108,7 @@ def download_slide(file_id: str, case_id: str) -> str:
     timeout=60 * 60,
     retries=1,
 )
-def process_slide(case_id: str) -> str:
+def process_slide(case_id: str, encoder_name: str = "resnet50", hf_token: str | None = None) -> str:
     sys.path.insert(0, "/app")
     import torch
     from preprocessing import TilePipeline
@@ -112,9 +117,10 @@ def process_slide(case_id: str) -> str:
 
     slide_path = REMOTE_ROOT / "raw"      / f"{case_id}.svs"
     tile_h5    = REMOTE_ROOT / "tiles"    / f"{case_id}.h5"
-    feat_h5    = REMOTE_ROOT / "features" / f"{case_id}.h5"
+    features_subdir = f"features_{encoder_name}"
+    feat_h5    = REMOTE_ROOT / features_subdir / f"{case_id}.h5"
 
-    for d in ("tiles", "features"):
+    for d in ("tiles", features_subdir):
         (REMOTE_ROOT / d).mkdir(parents=True, exist_ok=True)
 
     if not slide_path.exists():
@@ -137,7 +143,7 @@ def process_slide(case_id: str) -> str:
     if not feat_h5.exists():
         try:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            encoder = get_encoder("resnet50", device)
+            encoder = get_encoder(encoder_name, device, hf_token=hf_token)
             extract_slide(str(slide_path), str(tile_h5), str(feat_h5),
                           encoder, device, batch_size=256)
         except Exception as exc:
@@ -157,13 +163,13 @@ def process_slide(case_id: str) -> str:
     timeout=60 * 60 * 4,
     cpu=4,
 )
-def run_train(labels_csv_content: str) -> None:
+def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
     sys.path.insert(0, "/app")
     import subprocess
 
     labels_csv   = REMOTE_ROOT / "labels" / "tcga_brca_labels.csv"
     splits_dir   = REMOTE_ROOT / "splits"
-    features_dir = REMOTE_ROOT / "features"
+    features_dir = REMOTE_ROOT / f"features_{encoder_name}"
     ckpt_dir     = REMOTE_ROOT / "checkpoints"
 
     labels_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +200,7 @@ def run_train(labels_csv_content: str) -> None:
             "--splits_dir",  str(splits_dir),
             "--target",      target,
             "--model",       "clam_sb",
-            "--in_dim",      "2048",
+            "--in_dim",      "auto",
             "--epochs",      "20",
             "--save_dir",    str(ckpt_dir),
         ], check=True)
@@ -205,7 +211,7 @@ def run_train(labels_csv_content: str) -> None:
             "--splits_dir",  str(splits_dir),
             "--target",      target,
             "--checkpoint",  str(ckpt_dir / f"{target}_clam_sb_best.pt"),
-            "--in_dim",      "2048",
+            "--in_dim",      "auto",
         ], check=True)
 
     vol.commit()
@@ -215,8 +221,9 @@ def run_train(labels_csv_content: str) -> None:
 # Local entrypoint — runs on your laptop, dispatches to Modal
 # ---------------------------------------------------------------------------
 @app.local_entrypoint()
-def main(step: str = "all"):
+def main(step: str = "all", encoder: str = "resnet50"):
     import pandas as pd
+    import os
 
     manifest_path   = Path("data/manifest.txt")
     labels_csv_path = Path("data/labels/tcga_brca_labels.csv")
@@ -237,11 +244,11 @@ def main(step: str = "all"):
 
     if step in ("all", "process"):
         print(f"Tiling + extracting features for {len(case_ids)} slides …")
-        for res in process_slide.map(case_ids):
+        hf_token = os.environ.get("HF_TOKEN")
+        for res in process_slide.starmap((case_id, encoder, hf_token) for case_id in case_ids):
             print(f"  {res}")
 
     if step in ("all", "train"):
         print("Running baseline + CLAM training …")
-        run_train.remote(labels_csv_path.read_text())
+        run_train.remote(labels_csv_path.read_text(), encoder)
         print("Training dispatched — follow logs at modal.com/apps")
-

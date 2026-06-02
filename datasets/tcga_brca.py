@@ -24,6 +24,28 @@ CONTINUOUS_TARGETS = ["estrogen_score", "proliferation_score", "immune_score"]
 ALL_TARGETS = BINARY_TARGETS + ["PAM50_subtype"] + CONTINUOUS_TARGETS
 
 
+def infer_feature_dim(feature_dir: str, case_ids: Optional[List[str]] = None) -> int:
+    """
+    Infer encoder feature dimension from the first available .h5 feature file.
+
+    Prefer the additive `feature_dim` attr written by extract_features.py, but
+    fall back to the second dimension of the `features` dataset for older files.
+    """
+    feature_dir = Path(feature_dir)
+    candidates = [feature_dir / f"{cid}.h5" for cid in case_ids] if case_ids else sorted(feature_dir.glob("*.h5"))
+    for h5_path in candidates:
+        if not h5_path.exists():
+            continue
+        with h5py.File(h5_path, "r") as f:
+            if "feature_dim" in f.attrs:
+                return int(f.attrs["feature_dim"])
+            feats = f["features"]
+            if len(feats.shape) != 2:
+                raise ValueError(f"Expected 2-D features in {h5_path}, got shape {feats.shape}")
+            return int(feats.shape[1])
+    raise ValueError(f"No .h5 feature files found in {feature_dir}")
+
+
 class TCGABRCADataset(Dataset):
     """
     Args:

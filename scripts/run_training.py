@@ -3,13 +3,13 @@ End-to-end training script for CLAM_SB / CLAM_MB / TumorAwareMIL.
 
 Usage (binary):
     python scripts/run_training.py \
-        --feature_dir data/features \
+        --feature_dir data/features_resnet50 \
         --labels_csv data/labels/tcga_brca_labels.csv \
         --splits_dir data/splits \
         --target ER_status \
         --model clam_sb \
         --epochs 20 \
-        --in_dim 2048
+        --in_dim auto
 
 Usage (PAM50 multi-class):
     python scripts/run_training.py ... \
@@ -25,7 +25,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datasets import TCGABRCADataset, load_split
+from datasets import TCGABRCADataset, infer_feature_dim, load_split
 from models import CLAM_MB, CLAM_SB, TumorAwareMIL
 from training import Trainer
 
@@ -43,8 +43,8 @@ def parse_args():
     p.add_argument("--task_type", default="binary", choices=["binary", "multiclass"])
     p.add_argument("--model", default="clam_sb",
                    choices=["clam_sb", "clam_mb", "tumor_aware"])
-    p.add_argument("--in_dim", type=int, default=2048,
-                   help="Feature dim: 2048 for ResNet-50, 1024 for UNI")
+    p.add_argument("--in_dim", default="auto",
+                   help="Feature dim or 'auto' to infer from feature files.")
     p.add_argument("--hidden_dim", type=int, default=256)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--lr", type=float, default=2e-4)
@@ -77,6 +77,8 @@ def main():
 
     train_ids = load_split(f"{args.splits_dir}/train.csv")
     val_ids   = load_split(f"{args.splits_dir}/val.csv")
+    in_dim = infer_feature_dim(args.feature_dir, train_ids) if args.in_dim == "auto" else int(args.in_dim)
+    print(f"Feature dim: {in_dim}")
 
     train_ds = TCGABRCADataset(
         args.feature_dir, args.labels_csv, train_ids,
@@ -90,6 +92,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=2)
     val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False, num_workers=2)
 
+    args.in_dim = in_dim
     model = build_model(args, n_classes)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     trainer = Trainer(

@@ -8,7 +8,7 @@ aggregation — just an average bag embedding.
 
 Usage:
     python scripts/run_baseline.py \
-        --feature_dir data/features \
+        --feature_dir data/features_resnet50 \
         --labels_csv data/labels/tcga_brca_labels.csv \
         --splits_dir data/splits
 

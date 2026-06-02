@@ -284,12 +284,12 @@ Next steps:
   bash data/download.sh {args.out_manifest} data/raw/
   python scripts/preprocess_slides.py --slide_dir data/raw --output_dir data/tiles
   python scripts/extract_features.py --tile_dir data/tiles --slide_dir data/raw \\
-      --output_dir data/features --encoder resnet50
+      --output_dir data/features_resnet50 --encoder resnet50
   python -c "from datasets import make_patient_splits; \\
              make_patient_splits('{args.out_csv}', 'data/splits')"
-  python scripts/run_baseline.py --feature_dir data/features \\
+  python scripts/run_baseline.py --feature_dir data/features_resnet50 \\
       --labels_csv {args.out_csv} --splits_dir data/splits
-  python scripts/run_training.py --feature_dir data/features \\
+  python scripts/run_training.py --feature_dir data/features_resnet50 \\
       --labels_csv {args.out_csv} --splits_dir data/splits --target ER_status
 """)
 

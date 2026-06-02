@@ -1,0 +1,6 @@
+case_id,ER_status,PR_status,HER2_status,PAM50_subtype
+TCGA-A1-A0SB,1.0,0.0,0.0,
+TCGA-A1-A0SF,1.0,1.0,0.0,
+TCGA-A1-A0SI,1.0,1.0,0.0,
+TCGA-A1-A0SN,1.0,1.0,1.0,
+TCGA-A1-A0SQ,1.0,1.0,0.0,

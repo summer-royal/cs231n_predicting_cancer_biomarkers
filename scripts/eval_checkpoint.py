@@ -3,12 +3,12 @@ Evaluate a saved CLAM checkpoint on the test split.
 
 Usage:
     python scripts/eval_checkpoint.py \
-        --feature_dir data/features \
+        --feature_dir data/features_resnet50 \
         --labels_csv data/labels/tcga_brca_labels.csv \
         --splits_dir data/splits \
         --target ER_status \
         --checkpoint checkpoints/ER_status_clam_sb_best.pt \
-        --in_dim 2048
+        --in_dim auto
 """
 
 import argparse
@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datasets import TCGABRCADataset, load_split
+from datasets import TCGABRCADataset, infer_feature_dim, load_split
 from evaluation.metrics import binary_metrics
 from models import CLAM_SB
 
@@ -33,7 +33,7 @@ def parse_args():
     p.add_argument("--splits_dir",   required=True)
     p.add_argument("--target",       required=True)
     p.add_argument("--checkpoint",   required=True)
-    p.add_argument("--in_dim",  type=int, default=2048)
+    p.add_argument("--in_dim", default="auto")
     p.add_argument("--hidden_dim", type=int, default=256)
     return p.parse_args()
 
@@ -43,11 +43,12 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     test_ids = load_split(f"{args.splits_dir}/test.csv")
+    in_dim = infer_feature_dim(args.feature_dir, test_ids) if args.in_dim == "auto" else int(args.in_dim)
     test_ds  = TCGABRCADataset(args.feature_dir, args.labels_csv,
                                 test_ids, target=args.target)
     loader   = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
-    model = CLAM_SB(in_dim=args.in_dim, hidden_dim=args.hidden_dim, n_classes=2)
+    model = CLAM_SB(in_dim=in_dim, hidden_dim=args.hidden_dim, n_classes=2)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     model = model.to(device).eval()
 
