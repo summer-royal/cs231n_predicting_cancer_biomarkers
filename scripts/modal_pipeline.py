@@ -17,8 +17,7 @@ Usage:
     modal run scripts/modal_pipeline.py --step train
 
 CONCH note:
-    CONCH is not installed in this base image. Add the CONCH GitHub package to
-    the image before running with --encoder conch.
+    CONCH is installed in the Modal image from the MahmoodLab GitHub repo.
 """
 
 import sys
@@ -35,7 +34,7 @@ REMOTE_ROOT = Path("/data")
 # Container image: PyTorch base + OpenSlide + project code
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install(["libgl1", "libglib2.0-0"])
+    .apt_install(["git", "libgl1", "libglib2.0-0"])
     .pip_install(
         "torch", "torchvision",
         extra_index_url="https://download.pytorch.org/whl/cu121",
@@ -46,6 +45,7 @@ image = (
         "tqdm", "requests", "Pillow", "numpy", "timm", "huggingface_hub",
         "matplotlib", "seaborn",
     )
+    .pip_install("git+https://github.com/mahmoodlab/CONCH.git")
     # Copy project source into the container
     .add_local_dir("preprocessing", "/app/preprocessing")
     .add_local_dir("models",        "/app/models")
@@ -116,6 +116,9 @@ def process_slide(case_id: str, encoder_name: str = "resnet50", hf_token: str | 
     from models import get_encoder
     from scripts.extract_features import extract_slide
 
+    if encoder_name in ("uni", "conch") and not hf_token:
+        return f"missing_hf_token {case_id}: set HF_TOKEN before running gated encoder '{encoder_name}'"
+
     slide_path = REMOTE_ROOT / "raw"      / f"{case_id}.svs"
     tile_h5    = REMOTE_ROOT / "tiles"    / f"{case_id}.h5"
     features_subdir = f"features_{encoder_name}"
@@ -168,8 +171,8 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
     sys.path.insert(0, "/app")
     import subprocess
 
-    labels_csv   = REMOTE_ROOT / "labels" / "tcga_brca_labels.csv"
-    splits_dir   = REMOTE_ROOT / "splits"
+    labels_csv   = REMOTE_ROOT / "labels" / encoder_name / "tcga_brca_labels.csv"
+    splits_dir   = REMOTE_ROOT / "splits" / encoder_name
     features_dir = REMOTE_ROOT / f"features_{encoder_name}"
     ckpt_dir     = REMOTE_ROOT / "checkpoints"
     figures_dir  = REMOTE_ROOT / "figures" / encoder_name
@@ -272,6 +275,13 @@ def main(step: str = "all", encoder: str = "resnet50"):
     if step in ("all", "process"):
         print(f"Tiling + extracting features for {len(case_ids)} slides …")
         hf_token = os.environ.get("HF_TOKEN")
+        if encoder in ("uni", "conch") and not hf_token:
+            raise RuntimeError(
+                f"Encoder '{encoder}' requires gated Hugging Face access. "
+                "Set HF_TOKEN in this shell before running Modal."
+            )
+        if encoder in ("uni", "conch"):
+            print("HF_TOKEN found locally; passing it to Modal workers.")
         for res in process_slide.starmap((case_id, encoder, hf_token) for case_id in case_ids):
             print(f"  {res}")
 
