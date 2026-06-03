@@ -44,6 +44,7 @@ image = (
         "openslide-python>=1.3.0", "openslide-bin",  # 1.3+ auto-loads bundled lib
         "h5py", "pandas", "scikit-learn", "scipy",
         "tqdm", "requests", "Pillow", "numpy", "timm", "huggingface_hub",
+        "matplotlib", "seaborn",
     )
     # Copy project source into the container
     .add_local_dir("preprocessing", "/app/preprocessing")
@@ -171,6 +172,14 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
     splits_dir   = REMOTE_ROOT / "splits"
     features_dir = REMOTE_ROOT / f"features_{encoder_name}"
     ckpt_dir     = REMOTE_ROOT / "checkpoints"
+    figures_dir  = REMOTE_ROOT / "figures" / encoder_name
+    encoder_dims = {"resnet50": "2048", "uni": "1024", "conch": "512"}
+
+    # Backward compatibility with earlier ResNet-50 runs that wrote to
+    # /data/features before encoder-specific feature directories existed.
+    legacy_resnet_features = REMOTE_ROOT / "features"
+    if encoder_name == "resnet50" and not features_dir.exists() and legacy_resnet_features.exists():
+        features_dir = legacy_resnet_features
 
     labels_csv.parent.mkdir(parents=True, exist_ok=True)
     labels_csv.write_text(labels_csv_content)
@@ -191,9 +200,15 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
         "--splits_dir",  str(splits_dir),
     ], check=True)
 
-    # Train clam_sb and tumor_aware for each binary target (ablation)
+    # Train clam_sb and tumor_aware for each binary target (ablation).
+    # Skip any model whose checkpoint already exists so the step is
+    # idempotent/resumable and we don't re-burn credits on prior runs.
     for target in ["ER_status", "PR_status", "HER2_status"]:
         for model in ["clam_sb", "tumor_aware"]:
+            ckpt = ckpt_dir / f"{target}_{model}_best.pt"
+            if ckpt.exists():
+                print(f"[skip] {ckpt.name} already exists — not retraining")
+                continue
             subprocess.run([
                 "python", "/app/scripts/run_training.py",
                 "--feature_dir", str(features_dir),
@@ -205,6 +220,26 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
                 "--epochs",      "20",
                 "--save_dir",    str(ckpt_dir),
             ], check=True)
+
+    # Persist final ablation artifacts for report analysis. This re-fits the
+    # mean-pool baseline on the same split and overlays it with both MIL models.
+    for target in ["ER_status", "PR_status", "HER2_status"]:
+        subprocess.run([
+            "python", "/app/scripts/plot_ablation.py",
+            "--feature_dir",  str(features_dir),
+            "--labels_csv",   str(labels_csv),
+            "--splits_dir",   str(splits_dir),
+            "--target",       target,
+            "--split",        "test",
+            "--checkpoints",
+            str(ckpt_dir / f"{target}_clam_sb_best.pt"),
+            str(ckpt_dir / f"{target}_tumor_aware_best.pt"),
+            "--models",       "clam_sb", "tumor_aware",
+            "--model_labels", "CLAM-SB", "Tumor-Aware CLAM",
+            "--in_dim",       encoder_dims.get(encoder_name, "2048"),
+            "--include_baseline",
+            "--out_dir",      str(figures_dir),
+        ], check=True)
 
     vol.commit()
 
