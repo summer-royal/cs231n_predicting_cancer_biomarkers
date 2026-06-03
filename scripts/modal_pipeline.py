@@ -17,8 +17,7 @@ Usage:
     modal run scripts/modal_pipeline.py --step train
 
 CONCH note:
-    CONCH is not installed in this base image. Add the CONCH GitHub package to
-    the image before running with --encoder conch.
+    CONCH is installed in the Modal image from the MahmoodLab GitHub repo.
 """
 
 import sys
@@ -35,7 +34,7 @@ REMOTE_ROOT = Path("/data")
 # Container image: PyTorch base + OpenSlide + project code
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install(["libgl1", "libglib2.0-0"])
+    .apt_install(["git", "libgl1", "libglib2.0-0"])
     .pip_install(
         "torch", "torchvision",
         extra_index_url="https://download.pytorch.org/whl/cu121",
@@ -46,6 +45,7 @@ image = (
         "tqdm", "requests", "Pillow", "numpy", "timm", "huggingface_hub",
         "matplotlib", "seaborn",
     )
+    .pip_install("git+https://github.com/mahmoodlab/CONCH.git")
     # Copy project source into the container
     .add_local_dir("preprocessing", "/app/preprocessing")
     .add_local_dir("models",        "/app/models")
