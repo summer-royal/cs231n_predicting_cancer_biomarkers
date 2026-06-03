@@ -15,6 +15,7 @@ Usage:
     modal run scripts/modal_pipeline.py --step download
     modal run scripts/modal_pipeline.py --step process
     modal run scripts/modal_pipeline.py --step train
+    modal run scripts/modal_pipeline.py --step figures
 
 CONCH note:
     CONCH is installed in the Modal image from the MahmoodLab GitHub repo.
@@ -174,9 +175,8 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
     labels_csv   = REMOTE_ROOT / "labels" / encoder_name / "tcga_brca_labels.csv"
     splits_dir   = REMOTE_ROOT / "splits" / encoder_name
     features_dir = REMOTE_ROOT / f"features_{encoder_name}"
-    ckpt_dir     = REMOTE_ROOT / "checkpoints"
+    ckpt_dir     = REMOTE_ROOT / "checkpoints" / encoder_name
     figures_dir  = REMOTE_ROOT / "figures" / encoder_name
-    encoder_dims = {"resnet50": "2048", "uni": "1024", "conch": "512"}
 
     # Backward compatibility with earlier ResNet-50 runs that wrote to
     # /data/features before encoder-specific feature directories existed.
@@ -226,24 +226,47 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
 
     # Persist final ablation artifacts for report analysis. This re-fits the
     # mean-pool baseline on the same split and overlays it with both MIL models.
-    for target in ["ER_status", "PR_status", "HER2_status"]:
-        subprocess.run([
-            "python", "/app/scripts/plot_ablation.py",
-            "--feature_dir",  str(features_dir),
-            "--labels_csv",   str(labels_csv),
-            "--splits_dir",   str(splits_dir),
-            "--target",       target,
-            "--split",        "test",
-            "--checkpoints",
-            str(ckpt_dir / f"{target}_clam_sb_best.pt"),
-            str(ckpt_dir / f"{target}_tumor_aware_best.pt"),
-            "--models",       "clam_sb", "tumor_aware",
-            "--model_labels", "CLAM-SB", "Tumor-Aware CLAM",
-            "--in_dim",       encoder_dims.get(encoder_name, "2048"),
-            "--include_baseline",
-            "--out_dir",      str(figures_dir),
-        ], check=True)
+    for split in ["val", "test"]:
+        for target in ["ER_status", "PR_status", "HER2_status"]:
+            subprocess.run([
+                "python", "/app/scripts/plot_ablation.py",
+                "--feature_dir",  str(features_dir),
+                "--labels_csv",   str(labels_csv),
+                "--splits_dir",   str(splits_dir),
+                "--target",       target,
+                "--split",        split,
+                "--checkpoints",
+                str(ckpt_dir / f"{target}_clam_sb_best.pt"),
+                str(ckpt_dir / f"{target}_tumor_aware_best.pt"),
+                "--models",       "clam_sb", "tumor_aware",
+                "--model_labels", "CLAM-SB", "Tumor-Aware CLAM",
+                "--in_dim",       "auto",
+                "--include_baseline",
+                "--out_dir",      str(figures_dir),
+            ], check=True)
 
+    vol.commit()
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    gpu="T4",
+    timeout=60 * 60 * 4,
+    cpu=4,
+)
+def run_figures() -> None:
+    sys.path.insert(0, "/app")
+    import subprocess
+
+    subprocess.run([
+        "python", "/app/scripts/run_all_ablation.py",
+        "--root", str(REMOTE_ROOT),
+        "--encoders", "resnet50", "uni", "conch",
+        "--targets", "ER_status", "PR_status", "HER2_status",
+        "--splits", "val", "test",
+        "--summary_dir", str(REMOTE_ROOT / "figures" / "summary"),
+    ], check=True)
     vol.commit()
 
 
@@ -289,3 +312,8 @@ def main(step: str = "all", encoder: str = "resnet50"):
         print("Running baseline + CLAM training …")
         run_train.remote(labels_csv_path.read_text(), encoder)
         print("Training dispatched — follow logs at modal.com/apps")
+
+    if step == "figures":
+        print("Generating cross-encoder ablation figures and summary tables …")
+        run_figures.remote()
+        print("Figure generation dispatched — follow logs at modal.com/apps")
