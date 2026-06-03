@@ -43,7 +43,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datasets import TCGABRCADataset, load_split
+from datasets import TCGABRCADataset, infer_feature_dim, load_split
 from evaluation.metrics import binary_metrics
 from models import CLAM_MB, CLAM_SB, TumorAwareMIL
 
@@ -223,8 +223,8 @@ def parse_args():
                    help="Model type for each checkpoint")
     p.add_argument("--model_labels",  nargs="*", default=None,
                    help="Display labels for the legend (defaults to --models values)")
-    p.add_argument("--in_dim",        type=int, default=2048,
-                   help="Encoder feature dim (ResNet-50: 2048, UNI: 1024, CONCH: 512)")
+    p.add_argument("--in_dim",        default="auto",
+                   help="Encoder feature dim or 'auto' to infer from feature files")
     p.add_argument("--hidden_dim",    type=int, default=256)
     p.add_argument("--include_baseline", action="store_true",
                    help="Also run the mean-pool + LR baseline and include it in the plot")
@@ -244,6 +244,8 @@ def main():
     labels_df = pd.read_csv(args.labels_csv, index_col="case_id")
     train_ids = load_split(f"{args.splits_dir}/train.csv")
     eval_ids  = load_split(f"{args.splits_dir}/{args.split}.csv")
+    in_dim = infer_feature_dim(args.feature_dir, train_ids) if args.in_dim == "auto" else int(args.in_dim)
+    print(f"Feature dim: {in_dim}")
 
     entries = []
 
@@ -263,7 +265,7 @@ def main():
         dataset = TCGABRCADataset(
             args.feature_dir, args.labels_csv, eval_ids, target=args.target
         )
-        model = build_model(model_name, args.in_dim, args.hidden_dim)
+        model = build_model(model_name, in_dim, args.hidden_dim)
         model.load_state_dict(torch.load(ckpt, map_location=device))
         model = model.to(device).eval()
         y, p = get_mil_predictions(model, dataset, device, args.target)
