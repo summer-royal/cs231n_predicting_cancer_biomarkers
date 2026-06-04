@@ -103,8 +103,10 @@ def collect_predictions(model, dataset, device, target, task_type="binary"):
             probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()  # (C,)
 
             # Flatten attention to (K,)
+            # CLAM_SB returns A shape (K, 1); CLAM_MB returns (C, K).
+            # Distinguish them by the last dim: (K,1) has shape[-1]==1.
             A_np = A.cpu().numpy()
-            if A_np.ndim == 2 and A_np.shape[0] > 1:
+            if A_np.ndim == 2 and A_np.shape[-1] != 1:
                 # Multi-branch (C, K): use the attention of the predicted class
                 A_np = A_np[probs.argmax()]
             else:
@@ -265,13 +267,35 @@ def plot_attention_heatmap(
             except Exception:
                 pass
 
-        # Fallback: raw coordinate scatter (y is flipped so origin = top-left)
-        sc = ax.scatter(coords[:, 0], -coords[:, 1], c=weights,
-                        cmap="magma", s=4, vmin=0, vmax=weights.max())
-        plt.colorbar(sc, ax=ax, fraction=0.046)
-        ax.set_xlabel("x (px)")
-        ax.set_ylabel("-y (px)")
-        ax.set_aspect("equal")
+        # Fallback: render as a 2D grid image so tiles are always visible
+        # regardless of the raw pixel coordinate scale.
+        xs, ys = coords[:, 0], coords[:, 1]
+        x_min, y_min = xs.min(), ys.min()
+
+        # Infer tile step from the smallest gap between unique x positions.
+        ux = np.unique(xs)
+        step = int(np.diff(np.sort(ux)).min()) if len(ux) > 1 else patch_size
+
+        grid_w = int((xs.max() - x_min) / step) + 1
+        grid_h = int((ys.max() - y_min) / step) + 1
+
+        grid = np.full((grid_h, grid_w), np.nan)
+        for idx, (x, y) in enumerate(coords):
+            gx = int((x - x_min) / step)
+            gy = int((y - y_min) / step)
+            if 0 <= gy < grid_h and 0 <= gx < grid_w:
+                grid[gy, gx] = weights[idx]
+
+        # Use percentile-based normalization so subtle differences are visible.
+        # vmin=0 would collapse everything to the top of the colourmap when
+        # all softmax weights are tiny (e.g. 1/K ~ 1e-4).
+        vmin = np.nanpercentile(grid[~np.isnan(grid)], 10)
+        vmax = np.nanpercentile(grid[~np.isnan(grid)], 99)
+        im = ax.imshow(grid, cmap="magma", interpolation="nearest",
+                       vmin=vmin, vmax=vmax)
+        plt.colorbar(im, ax=ax, fraction=0.046)
+        ax.set_xlabel("tile col")
+        ax.set_ylabel("tile row")
         ax.set_title(f"{title}\n{case_id}", fontsize=8)
 
     _draw(axes[0], attention, "Attention")
