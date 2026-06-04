@@ -146,6 +146,57 @@ def test_gradients() -> None:
     print(f"[ok] gradients     tumor_scorer grad_l1={grad_norm:.4f}  inst_loss={inst_loss.item():.4f}")
 
 
+# ---------------------------------------------------------------------------
+# Test 6 -- Tumor-aware gate variants (residual / temp / regularizer)
+# ---------------------------------------------------------------------------
+def test_gate_variants() -> None:
+    K, D = 64, 2048
+    x = torch.randn(K, D)
+    label = torch.tensor([1])
+
+    torch.manual_seed(7)
+    base = TumorAwareMIL(backbone=CLAM_SB(in_dim=D, n_classes=2), in_dim=D).eval()
+    with torch.no_grad():
+        p = torch.softmax(base.tumor_scorer(x), dim=-1)[:, 1:2]
+        ref_gated = x * p
+        ref_logits, _, _ = base(x)
+    assert float(base.regularization_loss()) == 0.0, "default reg should be 0"
+    # recompute, confirm gate == h * p
+    with torch.no_grad():
+        hand_logits, _ = base.backbone(ref_gated)
+    assert torch.allclose(ref_logits, hand_logits, atol=1e-5), "default gate != h * p"
+
+    # residual + both reg + learnable temp
+    model = TumorAwareMIL(
+        backbone=CLAM_SB(in_dim=D, n_classes=2), in_dim=D,
+        gate_mode="residual", alpha=1.0, learn_temp=True,
+        reg_mode="both", reg_weight=0.1, budget=0.25,
+    )
+    model.train()
+    out = model(x, label=label)
+    assert len(out) == 3
+    logits, A, tumor_probs = out
+    assert logits.shape == (1, 2)
+    assert tumor_probs.shape == (K, 1)
+    assert ((tumor_probs >= 0) & (tumor_probs <= 1)).all()
+
+    reg = model.regularization_loss()
+    reg_val = reg.detach().item()
+    assert torch.isfinite(reg).all(), "gate reg not finite"
+    assert reg_val > 0.0, f"gate reg should be > 0, got {reg_val}"
+
+    loss = torch.nn.functional.cross_entropy(logits, label) + reg
+    loss.backward()
+
+    scorer_grads = [p.grad for p in model.tumor_scorer.parameters() if p.grad is not None]
+    grad_norm = sum(float(g.abs().sum()) for g in scorer_grads)
+    assert grad_norm > 0, "tumor_scorer got no gradient under residual gate"
+    assert model.log_temp.grad is not None, "temperature got no gradient"
+    assert float(model.log_temp.grad.abs().sum()) > 0, "temperature gradient is zero"
+    print(f"[ok] gate_variants reg={reg_val:.4f}  scorer_grad_l1={grad_norm:.4f}  "
+          f"temp_grad={float(model.log_temp.grad.abs().sum()):.4f}")
+
+
 def main() -> int:
     torch.manual_seed(0)
     test_clam_sb_binary()
@@ -153,6 +204,7 @@ def main() -> int:
     test_small_bag()
     test_tumor_aware()
     test_gradients()
+    test_gate_variants()
     print("\nAll CLAM smoke tests passed.")
     return 0
 

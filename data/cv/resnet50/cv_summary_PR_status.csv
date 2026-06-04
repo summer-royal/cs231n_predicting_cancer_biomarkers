@@ -1,0 +1,4 @@
+model,n_folds,auroc_mean,auroc_std,auprc_mean,auprc_std,pooled_auroc,pooled_auroc_lo,pooled_auroc_hi,pooled_auprc,pooled_auprc_lo,pooled_auprc_hi
+Mean-pool + LR,5,0.5649,0.0693,0.7643,0.0611,0.5587,0.4648,0.6448,0.7451,0.6543,0.8297
+CLAM-SB,5,0.5736,0.0987,0.7568,0.0589,0.5595,0.4606,0.6478,0.7316,0.653,0.8206
+Tumor-Aware CLAM,5,0.5716,0.1201,0.7484,0.0668,0.5414,0.4388,0.6378,0.7186,0.635,0.8091

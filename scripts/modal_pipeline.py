@@ -15,6 +15,8 @@ Usage:
     modal run scripts/modal_pipeline.py --step download
     modal run scripts/modal_pipeline.py --step process
     modal run scripts/modal_pipeline.py --step train
+    modal run scripts/modal_pipeline.py --step cv --encoder uni
+    modal run scripts/modal_pipeline.py --step cvb --encoder resnet50
     modal run scripts/modal_pipeline.py --step figures
 
 CONCH note:
@@ -252,6 +254,110 @@ def run_train(labels_csv_content: str, encoder_name: str = "resnet50") -> None:
     image=image,
     volumes={str(REMOTE_ROOT): vol},
     gpu="T4",
+    timeout=60 * 60 * 6,
+    cpu=4,
+)
+def run_cv(labels_csv_content: str, encoder_name: str = "resnet50",
+           n_folds: int = 5, epochs: int = 20) -> None:
+    sys.path.insert(0, "/app")
+    import subprocess
+
+    labels_csv   = REMOTE_ROOT / "labels" / encoder_name / "tcga_brca_labels.csv"
+    features_dir = REMOTE_ROOT / f"features_{encoder_name}"
+    cv_dir       = REMOTE_ROOT / "cv" / encoder_name
+
+    legacy_resnet_features = REMOTE_ROOT / "features"
+    if encoder_name == "resnet50" and not features_dir.exists() and legacy_resnet_features.exists():
+        features_dir = legacy_resnet_features
+
+    labels_csv.parent.mkdir(parents=True, exist_ok=True)
+    labels_csv.write_text(labels_csv_content)
+
+    for target in ["ER_status", "PR_status", "HER2_status"]:
+        subprocess.run([
+            "python", "/app/scripts/run_cv.py",
+            "--feature_dir", str(features_dir),
+            "--labels_csv",  str(labels_csv),
+            "--target",      target,
+            "--models",      "clam_sb", "tumor_aware",
+            "--include_baseline",
+            "--in_dim",      "auto",
+            "--n_folds",     str(n_folds),
+            "--epochs",      str(epochs),
+            "--out_dir",     str(cv_dir),
+        ], check=True)
+
+    subprocess.run([
+        "python", "/app/scripts/plot_cv_summary.py",
+        "--cv_dir",  str(cv_dir),
+        "--targets", "ER_status", "PR_status", "HER2_status",
+        "--out_dir", str(cv_dir),
+    ], check=True)
+
+    vol.commit()
+
+
+# tumor aware gate variants (extension)
+# (tag, display label, extra CLI flags)
+GATE_VARIANTS = [
+    ("residual", "Tumor-Aware (residual)",
+     ["--gate_mode", "residual", "--gate_alpha", "1.0"]),
+    ("residual_reg", "Tumor-Aware (residual+reg)",
+     ["--gate_mode", "residual", "--gate_alpha", "1.0",
+      "--reg_mode", "both", "--reg_weight", "0.1", "--gate_budget", "0.25"]),
+    ("residual_reg_temp", "Tumor-Aware (residual+reg+temp)",
+     ["--gate_mode", "residual", "--gate_alpha", "1.0",
+      "--reg_mode", "both", "--reg_weight", "0.1", "--gate_budget", "0.25",
+      "--learn_temp"]),
+]
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    gpu="T4",
+    timeout=60 * 60 * 6,
+    cpu=4,
+)
+def run_cv_variants(labels_csv_content: str, encoder_name: str = "resnet50",
+                    n_folds: int = 5, epochs: int = 20) -> None:
+    sys.path.insert(0, "/app")
+    import subprocess
+
+    labels_csv   = REMOTE_ROOT / "labels" / encoder_name / "tcga_brca_labels.csv"
+    features_dir = REMOTE_ROOT / f"features_{encoder_name}"
+    cv_dir       = REMOTE_ROOT / "cv" / encoder_name
+
+    legacy_resnet_features = REMOTE_ROOT / "features"
+    if encoder_name == "resnet50" and not features_dir.exists() and legacy_resnet_features.exists():
+        features_dir = legacy_resnet_features
+
+    labels_csv.parent.mkdir(parents=True, exist_ok=True)
+    labels_csv.write_text(labels_csv_content)
+
+    for target in ["ER_status", "PR_status", "HER2_status"]:
+        for tag, label, flags in GATE_VARIANTS:
+            subprocess.run([
+                "python", "/app/scripts/run_cv.py",
+                "--feature_dir", str(features_dir),
+                "--labels_csv",  str(labels_csv),
+                "--target",      target,
+                "--models",      "tumor_aware",
+                "--in_dim",      "auto",
+                "--n_folds",     str(n_folds),
+                "--epochs",      str(epochs),
+                "--out_dir",     str(cv_dir),
+                "--tag",         tag,
+                "--model_label", label,
+            ] + flags, check=True)
+
+    vol.commit()
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    gpu="T4",
     timeout=60 * 60 * 4,
     cpu=4,
 )
@@ -312,6 +418,16 @@ def main(step: str = "all", encoder: str = "resnet50"):
         print("Running baseline + CLAM training …")
         run_train.remote(labels_csv_path.read_text(), encoder)
         print("Training dispatched — follow logs at modal.com/apps")
+
+    if step == "cv":
+        print(f"Running 5-fold cross-validation ({encoder}) …")
+        run_cv.remote(labels_csv_path.read_text(), encoder)
+        print("CV dispatched — follow logs at modal.com/apps")
+
+    if step == "cvb":
+        print(f"Running 5-fold CV for tumor-aware gate variants ({encoder}) …")
+        run_cv_variants.remote(labels_csv_path.read_text(), encoder)
+        print("Tumor-aware variant CV dispatched — follow logs at modal.com/apps")
 
     if step == "figures":
         print("Generating cross-encoder ablation figures and summary tables …")
