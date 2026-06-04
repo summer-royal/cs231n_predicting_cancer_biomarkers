@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datasets import TCGABRCADataset, infer_feature_dim, load_split
-from evaluation.metrics import binary_metrics
+from evaluation.metrics import binary_metrics_with_ci, fmt_ci
 from models import CLAM_MB, CLAM_SB, TumorAwareMIL
 
 BINARY_N_CLASSES = 2
@@ -167,26 +167,34 @@ def plot_overlay(entries, target, split, out_dir):
     print(f"  -> {path}")
 
 
-def save_comparison_table(entries, target, split, out_dir):
+def save_comparison_table(entries, target, split, out_dir, n_boot=1000):
     """entries: list of (display_name, labels_arr, probs_arr)"""
-    rows = {name: binary_metrics(y, p) for name, y, p in entries}
+    rows = {name: binary_metrics_with_ci(y, p, n_boot=n_boot) for name, y, p in entries}
     df = pd.DataFrame(rows).T.round(4)
     df.index.name = "model"
 
+    # full numeric table w/ ci columns -> csv for downstream merging
     csv_path = out_dir / f"ablation_table_{target}_{split}.csv"
     df.to_csv(csv_path)
     print(f"\n=== Ablation ({target} / {split}) ===")
     print(df.to_string())
     print(f"  -> {csv_path}")
 
+    # compact table for the pdf: ci folded into auroc/auprc strings
+    disp = pd.DataFrame(index=df.index)
+    disp["auroc"] = [fmt_ci(r.auroc, r.auroc_lo, r.auroc_hi) for r in df.itertuples()]
+    disp["auprc"] = [fmt_ci(r.auprc, r.auprc_lo, r.auprc_hi) for r in df.itertuples()]
+    disp["balanced_acc"] = df["balanced_acc"].map(lambda v: f"{v:.3f}")
+    disp["brier"] = df["brier"].map(lambda v: f"{v:.3f}")
+
     fig, ax = plt.subplots(
-        figsize=(max(6, len(df.columns) * 2), max(2, len(df) * 0.7 + 1.5))
+        figsize=(max(8, len(disp.columns) * 2.4), max(2, len(disp) * 0.7 + 1.5))
     )
     ax.axis("off")
     table = ax.table(
-        cellText=df.values.tolist(),
-        rowLabels=list(df.index),
-        colLabels=list(df.columns),
+        cellText=disp.values.tolist(),
+        rowLabels=list(disp.index),
+        colLabels=list(disp.columns),
         loc="center",
         cellLoc="center",
     )
@@ -228,6 +236,8 @@ def parse_args():
     p.add_argument("--hidden_dim",    type=int, default=256)
     p.add_argument("--include_baseline", action="store_true",
                    help="Also run the mean-pool + LR baseline and include it in the plot")
+    p.add_argument("--n_boot",        type=int, default=1000,
+                   help="bootstrap resamples for 95% ci (0 disables)")
     p.add_argument("--out_dir",       default="figures")
     return p.parse_args()
 
@@ -276,7 +286,7 @@ def main():
         return
 
     plot_overlay(entries, args.target, args.split, out_dir)
-    save_comparison_table(entries, args.target, args.split, out_dir)
+    save_comparison_table(entries, args.target, args.split, out_dir, n_boot=args.n_boot)
 
 
 if __name__ == "__main__":

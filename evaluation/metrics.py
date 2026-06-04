@@ -34,6 +34,44 @@ def binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[str, float]:
     }
 
 
+def bootstrap_ci(y_true, y_prob, metric_fn, n_boot=1000, seed=0):
+    # resample patients w/ replacement, recompute metric each time
+    rng = np.random.default_rng(seed)
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    n = len(y_true)
+    vals = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, n)
+        yt = y_true[idx]
+        if len(np.unique(yt)) < 2:
+            # need both classes or auroc/auprc undefined
+            continue
+        vals.append(metric_fn(yt, y_prob[idx]))
+    if not vals:
+        return float("nan"), float("nan")
+    lo, hi = np.percentile(vals, [2.5, 97.5])
+    return float(lo), float(hi)
+
+
+def binary_metrics_with_ci(y_true, y_prob, n_boot=1000, seed=0) -> Dict[str, float]:
+    # point estimates + 95% bootstrap ci on the ranking metrics
+    out = dict(binary_metrics(y_true, y_prob))
+    out["auroc_lo"], out["auroc_hi"] = bootstrap_ci(
+        y_true, y_prob, roc_auc_score, n_boot, seed
+    )
+    out["auprc_lo"], out["auprc_hi"] = bootstrap_ci(
+        y_true, y_prob, average_precision_score, n_boot, seed
+    )
+    return out
+
+
+def fmt_ci(point, lo, hi) -> str:
+    if np.isnan(lo) or np.isnan(hi):
+        return f"{point:.3f}"
+    return f"{point:.3f} [{lo:.2f}, {hi:.2f}]"
+
+
 def multiclass_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[str, float]:
     """
     Args:
