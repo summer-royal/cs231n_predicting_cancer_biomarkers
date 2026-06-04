@@ -43,7 +43,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datasets import TCGABRCADataset, load_split
+from datasets import TCGABRCADataset, infer_feature_dim, load_split
 from evaluation.metrics import binary_metrics, multiclass_metrics
 from models import CLAM_MB, CLAM_SB, TumorAwareMIL
 
@@ -300,8 +300,8 @@ def parse_args():
     p.add_argument("--model",       default="clam_sb",
                    choices=["clam_sb", "clam_mb", "tumor_aware"])
     p.add_argument("--task_type",   default="binary", choices=["binary", "multiclass"])
-    p.add_argument("--in_dim",      type=int, default=2048,
-                   help="Encoder feature dim (ResNet-50: 2048, UNI: 1024, CONCH: 512)")
+    p.add_argument("--in_dim",      default="auto",
+                   help="Encoder feature dim, or 'auto' to infer from feature files (default: auto)")
     p.add_argument("--hidden_dim",  type=int, default=256)
     p.add_argument("--split",       default="test", choices=["train", "val", "test"])
     p.add_argument("--out_dir",     default="figures")
@@ -324,7 +324,9 @@ def main():
     dataset = TCGABRCADataset(
         args.feature_dir, args.labels_csv, case_ids, target=args.target
     )
-    model = build_model(args.model, args.in_dim, args.hidden_dim, n_classes)
+    in_dim = infer_feature_dim(args.feature_dir, case_ids) if args.in_dim == "auto" else int(args.in_dim)
+    print(f"Feature dim: {in_dim}")
+    model = build_model(args.model, in_dim, args.hidden_dim, n_classes)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     model = model.to(device).eval()
     print(f"Loaded {args.model} | {len(dataset)} slides | device: {device}")
