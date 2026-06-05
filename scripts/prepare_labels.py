@@ -74,6 +74,20 @@ def _get(url: str, params: dict = None, retries: int = 4) -> dict:
             time.sleep(wait)
 
 
+def _post(url: str, data: dict = None, retries: int = 4) -> dict:
+    for attempt in range(retries):
+        try:
+            r = requests.post(url, data=data, timeout=120)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            if attempt == retries - 1:
+                raise
+            wait = 2 ** attempt
+            print(f"  [{attempt+1}/{retries}] {exc} — retry in {wait}s")
+            time.sleep(wait)
+
+
 # ---------------------------------------------------------------------------
 # cBioPortal: clinical labels
 # ---------------------------------------------------------------------------
@@ -175,7 +189,7 @@ def fetch_slides(case_ids: list) -> pd.DataFrame:
     chunk_size, all_rows = 500, []
     for i in range(0, len(case_ids), chunk_size):
         chunk = case_ids[i : i + chunk_size]
-        params = {
+        payload = {
             "filters": json.dumps({
                 "op": "and",
                 "content": [
@@ -193,7 +207,9 @@ def fetch_slides(case_ids: list) -> pd.DataFrame:
             "format": "JSON",
             "size": str(len(chunk) * 3),
         }
-        hits = _get(GDC_FILES_URL, params)["data"]["hits"]
+        # POST keeps large full-cohort filter payloads out of the URL and
+        # avoids HTTP 414 Request-URI Too Long from the GDC API.
+        hits = _post(GDC_FILES_URL, payload)["data"]["hits"]
         for f in hits:
             cases = f.get("cases") or [{}]
             all_rows.append({
