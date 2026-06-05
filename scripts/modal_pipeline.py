@@ -18,6 +18,8 @@ Usage:
     modal run scripts/modal_pipeline.py --step cv --encoder uni
     modal run scripts/modal_pipeline.py --step cvb --encoder resnet50
     modal run scripts/modal_pipeline.py --step figures
+    modal run scripts/modal_pipeline.py --step status --encoder resnet50
+    modal run scripts/modal_pipeline.py --step clean_case --case_id TCGA-XX-XXXX
 
 CONCH note:
     CONCH is installed in the Modal image from the MahmoodLab GitHub repo.
@@ -114,6 +116,7 @@ def download_slide(file_id: str, case_id: str) -> str:
 )
 def process_slide(case_id: str, encoder_name: str = "resnet50", hf_token: str | None = None) -> str:
     sys.path.insert(0, "/app")
+    import time
     import torch
     from preprocessing import TilePipeline
     from models import get_encoder
@@ -126,38 +129,116 @@ def process_slide(case_id: str, encoder_name: str = "resnet50", hf_token: str | 
     tile_h5    = REMOTE_ROOT / "tiles"    / f"{case_id}.h5"
     features_subdir = f"features_{encoder_name}"
     feat_h5    = REMOTE_ROOT / features_subdir / f"{case_id}.h5"
+    marker_dir = REMOTE_ROOT / "process_markers" / encoder_name
+    marker_path = marker_dir / f"{case_id}.txt"
 
-    for d in ("tiles", features_subdir):
+    for d in ("tiles", features_subdir, marker_dir):
         (REMOTE_ROOT / d).mkdir(parents=True, exist_ok=True)
 
+    def mark(phase: str) -> None:
+        msg = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {phase} {case_id} encoder={encoder_name}"
+        print(f"[process] {msg}", flush=True)
+        marker_path.write_text(msg + "\n")
+        vol.commit()
+
+    mark("start")
+
     if not slide_path.exists():
+        mark("missing_slide")
         return f"missing_slide {case_id}"
 
     # Validate file is a real SVS/TIFF before handing it to OpenSlide
     with open(slide_path, "rb") as f:
         magic = f.read(4)
     if magic[:2] not in (b"\x49\x49", b"\x4D\x4D"):
+        mark("invalid_file")
         return f"invalid_file {case_id} size={slide_path.stat().st_size} magic={magic.hex()}"
 
     if not tile_h5.exists():
         try:
+            mark("tiling_start")
             n = TilePipeline().process_slide(str(slide_path), str(tile_h5))
+            mark(f"tiling_done n_tiles={n}")
         except Exception as exc:
+            mark("tile_error")
             return f"tile_error {case_id}: {exc}"
         if n == 0:
+            mark("no_tissue")
             return f"no_tissue {case_id}"
 
     if not feat_h5.exists():
         try:
+            mark("extract_start")
             device = "cuda" if torch.cuda.is_available() else "cpu"
             encoder = get_encoder(encoder_name, device, hf_token=hf_token)
             extract_slide(str(slide_path), str(tile_h5), str(feat_h5),
                           encoder, device, batch_size=256)
+            mark("extract_done")
         except Exception as exc:
+            mark("extract_error")
             return f"extract_error {case_id}: {exc}"
 
     vol.commit()
+    mark("done")
     return f"ok    {case_id}"
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    timeout=60 * 5,
+)
+def clean_case(case_id: str, encoder_name: str = "resnet50", delete_tile: bool = True) -> str:
+    """Remove one case's generated tile/features so a stuck run can be skipped or retried."""
+    paths = [
+        REMOTE_ROOT / f"features_{encoder_name}" / f"{case_id}.h5",
+    ]
+    if delete_tile:
+        paths.append(REMOTE_ROOT / "tiles" / f"{case_id}.h5")
+
+    removed, missing = [], []
+    for path in paths:
+        if path.exists():
+            path.unlink()
+            removed.append(str(path))
+        else:
+            missing.append(str(path))
+
+    vol.commit()
+    return f"clean_case {case_id} encoder={encoder_name} removed={removed} missing={missing}"
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    timeout=60 * 10,
+)
+def process_status(case_ids: list[str], encoder_name: str = "resnet50") -> str:
+    feature_dir = REMOTE_ROOT / f"features_{encoder_name}"
+    marker_dir = REMOTE_ROOT / "process_markers" / encoder_name
+    rows = []
+    for case_id in case_ids:
+        feat_h5 = feature_dir / f"{case_id}.h5"
+        marker = marker_dir / f"{case_id}.txt"
+        if feat_h5.exists():
+            status = "feature_done"
+        elif marker.exists():
+            status = marker.read_text().strip()
+        else:
+            status = "not_started_or_no_marker"
+        rows.append((case_id, status))
+
+    unfinished = [(cid, status) for cid, status in rows if status != "feature_done"]
+    lines = [
+        f"encoder={encoder_name}",
+        f"total={len(rows)} feature_done={len(rows) - len(unfinished)} unfinished={len(unfinished)}",
+        "",
+        "unfinished cases:",
+    ]
+    lines.extend(f"{cid}\t{status}" for cid, status in unfinished[:100])
+    if len(unfinished) > 100:
+        lines.append(f"... {len(unfinished) - 100} more")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +461,12 @@ def run_figures() -> None:
 # Local entrypoint — runs on your laptop, dispatches to Modal
 # ---------------------------------------------------------------------------
 @app.local_entrypoint()
-def main(step: str = "all", encoder: str = "resnet50"):
+def main(
+    step: str = "all",
+    encoder: str = "resnet50",
+    case_id: str = "",
+    skip_cases: str = "",
+):
     import pandas as pd
     import os
 
@@ -395,6 +481,20 @@ def main(step: str = "all", encoder: str = "resnet50"):
     file_ids   = manifest["id"].tolist()
     file_names = manifest["filename"].tolist()
     case_ids   = [_case_id(fn) for fn in file_names]
+    skipped = {c.strip() for c in skip_cases.split(",") if c.strip()}
+    if skipped:
+        case_ids = [c for c in case_ids if c not in skipped]
+        print(f"Skipping {len(skipped)} case(s): {sorted(skipped)}")
+
+    if step == "clean_case":
+        if not case_id:
+            raise ValueError("Pass --case_id TCGA-XX-XXXX when using --step clean_case.")
+        print(clean_case.remote(case_id, encoder))
+        return
+
+    if step == "status":
+        print(process_status.remote(case_ids, encoder))
+        return
 
     if step in ("all", "download"):
         print(f"Downloading {len(file_ids)} slides in parallel …")

@@ -1,0 +1,4 @@
+model,auroc,auprc,balanced_acc,brier
+Mean-pool + LR,0.5263,0.2965,0.5158,0.3115
+CLAM-SB,0.5684,0.3022,0.4421,0.2428
+Tumor-Aware CLAM,0.5789,0.4033,0.5211,0.2056
