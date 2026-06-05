@@ -53,6 +53,13 @@ def parse_args():
     p.add_argument("--instance_eval", action="store_true",
                    help="Enable CLAM instance-clustering auxiliary loss")
     p.add_argument("--instance_loss_weight", type=float, default=0.3)
+    p.add_argument("--gate_mode", default="mult", choices=["mult", "residual"])
+    p.add_argument("--gate_alpha", type=float, default=1.0)
+    p.add_argument("--learn_temp", action="store_true")
+    p.add_argument("--reg_mode", default="none", choices=["none", "entropy", "budget", "both"])
+    p.add_argument("--reg_weight", type=float, default=0.0)
+    p.add_argument("--gate_budget", type=float, default=0.25)
+    p.add_argument("--checkpoint_suffix", default="")
     p.add_argument("--save_dir", default="checkpoints")
     p.add_argument("--wandb", action="store_true")
     return p.parse_args()
@@ -66,7 +73,41 @@ def build_model(args, n_classes):
     # tumor_aware
     backbone_cls = CLAM_SB if n_classes == BINARY_N_CLASSES else CLAM_MB
     backbone = backbone_cls(in_dim=args.in_dim, hidden_dim=args.hidden_dim, n_classes=n_classes)
-    return TumorAwareMIL(backbone=backbone, in_dim=args.in_dim)
+    return TumorAwareMIL(
+        backbone=backbone,
+        in_dim=args.in_dim,
+        gate_mode=args.gate_mode,
+        alpha=args.gate_alpha,
+        learn_temp=args.learn_temp,
+        reg_mode=args.reg_mode,
+        reg_weight=args.reg_weight,
+        budget=args.gate_budget,
+    )
+
+
+def checkpoint_stem(args):
+    if args.checkpoint_suffix:
+        return f"{args.target}_{args.model}_{args.checkpoint_suffix}"
+    if args.model != "tumor_aware":
+        return f"{args.target}_{args.model}"
+    if (
+        args.gate_mode == "mult"
+        and not args.learn_temp
+        and args.reg_mode == "none"
+        and args.reg_weight == 0.0
+    ):
+        return f"{args.target}_{args.model}"
+    parts = [args.model, args.gate_mode]
+    if args.gate_mode == "residual":
+        parts.append(f"a{args.gate_alpha:g}")
+    if args.reg_mode != "none" and args.reg_weight > 0.0:
+        parts.append(args.reg_mode)
+        parts.append(f"rw{args.reg_weight:g}")
+        if args.reg_mode in ("budget", "both"):
+            parts.append(f"b{args.gate_budget:g}")
+    if args.learn_temp:
+        parts.append("temp")
+    return f"{args.target}_{'_'.join(parts)}"
 
 
 def main():
@@ -107,7 +148,7 @@ def main():
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_path = save_dir / f"{args.target}_{args.model}_best.pt"
+    ckpt_path = save_dir / f"{checkpoint_stem(args)}_best.pt"
 
     best_primary = 0.0  # AUROC for binary, macro_auroc for multiclass
     primary_key  = "auroc" if args.task_type == "binary" else "macro_auroc"

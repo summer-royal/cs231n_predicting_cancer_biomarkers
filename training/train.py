@@ -56,6 +56,11 @@ class Trainer:
                 logits = out[0]
                 loss = self.criterion(logits, target_label)
 
+            reg_loss = None
+            if hasattr(self.model, "regularization_loss"):
+                reg_loss = self.model.regularization_loss()
+                loss = loss + reg_loss
+
             loss.backward()
             self.optimizer.step()
             total_loss += loss.item()
@@ -63,6 +68,8 @@ class Trainer:
             if self.use_wandb:
                 import wandb
                 wandb.log({"train/loss_step": loss.item()})
+                if reg_loss is not None:
+                    wandb.log({"train/gate_reg_step": reg_loss.item()})
 
         return total_loss / max(len(loader), 1)
 
