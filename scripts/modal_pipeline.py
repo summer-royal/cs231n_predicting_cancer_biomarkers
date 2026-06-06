@@ -17,6 +17,7 @@ Usage:
     modal run scripts/modal_pipeline.py --step train
     modal run scripts/modal_pipeline.py --step cv --encoder uni
     modal run scripts/modal_pipeline.py --step cvb --encoder resnet50
+    modal run scripts/modal_pipeline.py --step cvb_parallel --encoder uni
     modal run scripts/modal_pipeline.py --step figures
     modal run scripts/modal_pipeline.py --step status --encoder resnet50
     modal run scripts/modal_pipeline.py --step clean_case --case_id TCGA-XX-XXXX
@@ -439,6 +440,54 @@ def run_cv_variants(labels_csv_content: str, encoder_name: str = "resnet50",
     image=image,
     volumes={str(REMOTE_ROOT): vol},
     gpu="T4",
+    timeout=60 * 60 * 6,
+    cpu=4,
+)
+def run_cv_variants_target(
+    labels_csv_content: str,
+    encoder_name: str,
+    target: str,
+    n_folds: int = 5,
+    epochs: int = 20,
+) -> str:
+    """Run all tumor-aware gate variants for one target in one GPU container."""
+    sys.path.insert(0, "/app")
+    import subprocess
+
+    labels_csv   = REMOTE_ROOT / "labels" / encoder_name / "tcga_brca_labels.csv"
+    features_dir = REMOTE_ROOT / f"features_{encoder_name}"
+    cv_dir       = REMOTE_ROOT / "cv" / encoder_name
+
+    legacy_resnet_features = REMOTE_ROOT / "features"
+    if encoder_name == "resnet50" and not features_dir.exists() and legacy_resnet_features.exists():
+        features_dir = legacy_resnet_features
+
+    labels_csv.parent.mkdir(parents=True, exist_ok=True)
+    labels_csv.write_text(labels_csv_content)
+
+    for tag, label, flags in GATE_VARIANTS:
+        subprocess.run([
+            "python", "/app/scripts/run_cv.py",
+            "--feature_dir", str(features_dir),
+            "--labels_csv",  str(labels_csv),
+            "--target",      target,
+            "--models",      "tumor_aware",
+            "--in_dim",      "auto",
+            "--n_folds",     str(n_folds),
+            "--epochs",      str(epochs),
+            "--out_dir",     str(cv_dir),
+            "--tag",         tag,
+            "--model_label", label,
+        ] + flags, check=True)
+
+    vol.commit()
+    return f"cvb_done {encoder_name} {target}"
+
+
+@app.function(
+    image=image,
+    volumes={str(REMOTE_ROOT): vol},
+    gpu="T4",
     timeout=60 * 60 * 4,
     cpu=4,
 )
@@ -528,6 +577,16 @@ def main(
         print(f"Running 5-fold CV for tumor-aware gate variants ({encoder}) …")
         run_cv_variants.remote(labels_csv_path.read_text(), encoder)
         print("Tumor-aware variant CV dispatched — follow logs at modal.com/apps")
+
+    if step == "cvb_parallel":
+        print(f"Running target-parallel 5-fold CV for tumor-aware gate variants ({encoder}) …")
+        labels_csv_content = labels_csv_path.read_text()
+        targets = ["ER_status", "PR_status", "HER2_status"]
+        for res in run_cv_variants_target.starmap(
+            (labels_csv_content, encoder, target) for target in targets
+        ):
+            print(f"  {res}")
+        print("Target-parallel tumor-aware variant CV complete")
 
     if step == "figures":
         print("Generating cross-encoder ablation figures and summary tables …")
