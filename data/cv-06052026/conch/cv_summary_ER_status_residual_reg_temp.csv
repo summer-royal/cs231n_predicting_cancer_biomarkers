@@ -1,0 +1,2 @@
+model,n_folds,auroc_mean,auroc_std,auprc_mean,auprc_std,pooled_auroc,pooled_auroc_lo,pooled_auroc_hi,pooled_auprc,pooled_auprc_lo,pooled_auprc_hi
+Tumor-Aware (residual+reg+temp),5,0.5268,0.0885,0.7866,0.0539,0.5294,0.4278,0.6213,0.759,0.6747,0.8491
